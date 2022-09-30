@@ -65,93 +65,48 @@
 
 bool ES8388::write_reg(uint8_t slave_add, uint8_t reg_add, uint8_t data)
 {
-    Wire.beginTransmission(slave_add);
-    Wire.write(reg_add);
-    Wire.write(data);
-    return Wire.endTransmission() == 0;
+    _Wire->beginTransmission(slave_add);
+    _Wire->write(reg_add);
+    _Wire->write(data);
+    return _Wire->endTransmission() == 0;
 }
 
 bool ES8388::read_reg(uint8_t slave_add, uint8_t reg_add, uint8_t &data)
 {
     bool retval = false;
-    Wire.beginTransmission(slave_add);
-    Wire.write(reg_add);
-    Wire.endTransmission(false);
-    Wire.requestFrom((uint16_t)slave_add, (uint8_t)1, true);
-    if (Wire.available() >= 1)
+    _Wire->beginTransmission(slave_add);
+    _Wire->write(reg_add);
+    _Wire->endTransmission(false);
+    _Wire->requestFrom((uint16_t)slave_add, (uint8_t)1, true);
+    if (_Wire->available() >= 1)
     {
-        data = Wire.read();
+        data = _Wire->read();
         retval = true;
     }
     return retval;
 }
 
-bool ES8388::begin(int sda, int scl, uint32_t frequency)
+bool ES8388::begin(TwoWire *TwoWireInstance)
 {
-    bool res = identify(sda, scl, frequency);
+    _Wire = TwoWireInstance;
+    bool res = identify();
 
     if (res == true)
     {
+        res = init();
+    }
+    return res;
+}
 
-        /* mute DAC during setup, power up all systems, slave mode */
-        res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL3, 0x04);
-        res &= write_reg(ES8388_ADDR, ES8388_CONTROL2, 0x50);
-        res &= write_reg(ES8388_ADDR, ES8388_CHIPPOWER, 0x00);
-        res &= write_reg(ES8388_ADDR, ES8388_MASTERMODE, 0x00);
+bool ES8388::begin(int sda, int scl, uint32_t frequency)
+{
+    _Wire = &Wire;
+    _Wire->begin(sda, scl, frequency);
+    bool res = identify();
 
-        /* power up DAC and enable LOUT1+2 / ROUT1+2, ADC sample rate = DAC sample rate */
-        res &= write_reg(ES8388_ADDR, ES8388_DACPOWER, 0x3e);
-        res &= write_reg(ES8388_ADDR, ES8388_CONTROL1, 0x12);
-
-        /* DAC I2S setup: 16 bit word length, I2S format; MCLK / Fs = 256*/
-        res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL1, 0x18);
-        res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL2, 0x02);
-
-        /* DAC to output route mixer configuration: ADC MIX TO OUTPUT */
-        res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL16, 0x1B);
-        res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL17, 0x90);
-        res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL20, 0x90);
-
-        /* DAC and ADC use same LRCK, enable MCLK input; output resistance setup */
-        res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL21, 0x80);
-        res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL23, 0x00);
-
-        /* DAC volume control: 0dB (maximum, unattenuated)  */
-        res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL5, 0x00);
-        res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL4, 0x00);
-
-        /* power down ADC while configuring; volume: +9dB for both channels */
-        res &= write_reg(ES8388_ADDR, ES8388_ADCPOWER, 0xff);
-        res &= write_reg(ES8388_ADDR, ES8388_ADCCONTROL1, 0x88); // +24db
-
-        /* select LINPUT2 / RINPUT2 as ADC input; stereo; 16 bit word length, format right-justified, MCLK / Fs = 256 */
-        res &= write_reg(ES8388_ADDR, ES8388_ADCCONTROL2, 0xf0); // 50
-        res &= write_reg(ES8388_ADDR, ES8388_ADCCONTROL3, 0x80); // 00
-        res &= write_reg(ES8388_ADDR, ES8388_ADCCONTROL4, 0x0e);
-        res &= write_reg(ES8388_ADDR, ES8388_ADCCONTROL5, 0x02);
-
-        /* set ADC volume */
-        res &= write_reg(ES8388_ADDR, ES8388_ADCCONTROL8, 0x20);
-        res &= write_reg(ES8388_ADDR, ES8388_ADCCONTROL9, 0x20);
-
-        /* set LOUT1 / ROUT1 volume: 0dB (unattenuated) */
-        res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL24, 0x1e);
-        res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL25, 0x1e);
-
-        /* set LOUT2 / ROUT2 volume: 0dB (unattenuated) */
-        res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL26, 0x1e);
-        res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL27, 0x1e);
-
-        /* power up and enable DAC; power up ADC (no MIC bias) */
-        res &= write_reg(ES8388_ADDR, ES8388_DACPOWER, 0x3c);
-        res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL3, 0x00);
-        res &= write_reg(ES8388_ADDR, ES8388_ADCPOWER, 0x00);
-
-        /* set up MCLK) */
-        #ifdef FUNC_GPIO0_CLK_OUT1
-		    PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO0_U, FUNC_GPIO0_CLK_OUT1);
-        #endif
-        WRITE_PERI_REG(PIN_CTRL, 0xFFF0);
+    if (res == true)
+    {
+        res = init();
     }
     return res;
 }
@@ -252,6 +207,72 @@ void ES8388::SetVolumeHeadphone(uint8_t vol){
     volume(ES_MAIN, 100);    
 }
 
+bool ES8388::init(){
+    bool res = true;
+
+/* mute DAC during setup, power up all systems, slave mode */
+    res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL3, 0x04);
+    res &= write_reg(ES8388_ADDR, ES8388_CONTROL2, 0x50);
+    res &= write_reg(ES8388_ADDR, ES8388_CHIPPOWER, 0x00);
+    res &= write_reg(ES8388_ADDR, ES8388_MASTERMODE, 0x00);
+
+    /* power up DAC and enable LOUT1+2 / ROUT1+2, ADC sample rate = DAC sample rate */
+    res &= write_reg(ES8388_ADDR, ES8388_DACPOWER, 0x3e);
+    res &= write_reg(ES8388_ADDR, ES8388_CONTROL1, 0x12);
+
+    /* DAC I2S setup: 16 bit word length, I2S format; MCLK / Fs = 256*/
+    res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL1, 0x18);
+    res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL2, 0x02);
+
+    /* DAC to output route mixer configuration: ADC MIX TO OUTPUT */
+    res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL16, 0x1B);
+    res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL17, 0x90);
+    res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL20, 0x90);
+
+    /* DAC and ADC use same LRCK, enable MCLK input; output resistance setup */
+    res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL21, 0x80);
+    res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL23, 0x00);
+
+    /* DAC volume control: 0dB (maximum, unattenuated)  */
+    res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL5, 0x00);
+    res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL4, 0x00);
+
+    /* power down ADC while configuring; volume: +9dB for both channels */
+    res &= write_reg(ES8388_ADDR, ES8388_ADCPOWER, 0xff);
+    res &= write_reg(ES8388_ADDR, ES8388_ADCCONTROL1, 0x88); // +24db
+
+    /* select LINPUT2 / RINPUT2 as ADC input; stereo; 16 bit word length, format right-justified, MCLK / Fs = 256 */
+    res &= write_reg(ES8388_ADDR, ES8388_ADCCONTROL2, 0xf0); // 50
+    res &= write_reg(ES8388_ADDR, ES8388_ADCCONTROL3, 0x80); // 00
+    res &= write_reg(ES8388_ADDR, ES8388_ADCCONTROL4, 0x0e);
+    res &= write_reg(ES8388_ADDR, ES8388_ADCCONTROL5, 0x02);
+
+    /* set ADC volume */
+    res &= write_reg(ES8388_ADDR, ES8388_ADCCONTROL8, 0x20);
+    res &= write_reg(ES8388_ADDR, ES8388_ADCCONTROL9, 0x20);
+
+    /* set LOUT1 / ROUT1 volume: 0dB (unattenuated) */
+    res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL24, 0x1e);
+    res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL25, 0x1e);
+
+    /* set LOUT2 / ROUT2 volume: 0dB (unattenuated) */
+    res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL26, 0x1e);
+    res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL27, 0x1e);
+
+    /* power up and enable DAC; power up ADC (no MIC bias) */
+    res &= write_reg(ES8388_ADDR, ES8388_DACPOWER, 0x3c);
+    res &= write_reg(ES8388_ADDR, ES8388_DACCONTROL3, 0x00);
+    res &= write_reg(ES8388_ADDR, ES8388_ADCPOWER, 0x00);
+
+    /* set up MCLK) */
+    #ifdef FUNC_GPIO0_CLK_OUT1
+        PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO0_U, FUNC_GPIO0_CLK_OUT1);
+    #endif
+    WRITE_PERI_REG(PIN_CTRL, 0xFFF0);
+
+    return res;
+}
+
 /**
  * @brief Test if device with I2C address for ES8388 is connected to the I2C bus 
  * 
@@ -261,9 +282,8 @@ void ES8388::SetVolumeHeadphone(uint8_t vol){
  * @return true device was found
  * @return false device was not found
  */
-bool ES8388::identify(int sda, int scl, uint32_t frequency)
+bool ES8388::identify()
 {
-    Wire.begin(sda, scl, frequency);
-    Wire.beginTransmission(ES8388_ADDR);
-    return Wire.endTransmission() == 0;
+    _Wire->beginTransmission(ES8388_ADDR);
+    return _Wire->endTransmission() == 0;
 }
